@@ -3,7 +3,6 @@
 [![make.fun · makefun-frontend-01](https://make.fun/badge/makefun-frontend-01.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
 [![rank](https://make.fun/badge/makefun-frontend-01/frianowzki/makefun-farmos/rank.svg)](https://make.fun/bounty/makefun-frontend-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
 [![reward](https://make.fun/badge/makefun-frontend-01/frianowzki/makefun-farmos/reward.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
-
 [![MIT](https://img.shields.io/badge/license-MIT-231f1a?style=flat-square)](./LICENSE)
 
 An entry in make.fun's [*Build the best make.fun frontend*](https://make.fun/bounty/makefun-frontend-01) bounty: a
@@ -14,6 +13,10 @@ bounty's page, its leaderboard, and an account's public profile.
 
 The first load is 9 files and 24,495 bytes gzip-9 (77,790 raw), read from the dossier's own Totals line; the whole
 app is 10 files and 78,369 bytes.
+
+The three make.fun badges above are live: the bounty itself, then this entry's rank and reward as make.fun records
+them. They link back to the [bounty](https://make.fun/bounty/makefun-frontend-01) and its
+[leaderboard](https://make.fun/bounty/makefun-frontend-01/leaderboard).
 
 ## Routes
 
@@ -71,11 +74,18 @@ screenshots back and reports their size, dimensions and theme from the pixels.
 ## Build the dossier
 
 ```sh
+node main.ts --out /absolute/path/outside/the/repo
 MAKEFUN_OUTPUT_DIR=/absolute/path/outside/the/repo node main.ts
 ```
 
 `main.ts` copies `app/` and `screenshots/` to that directory and writes `dossier.json` there with the vendored
-`buildDossier`. It defaults to `/output` when `MAKEFUN_OUTPUT_DIR` is unset and never removes the output directory.
+`buildDossier`. The output directory is `--out` when given, else `MAKEFUN_OUTPUT_DIR`, else `/output`; it is created
+if missing, its contents are overwritten, and it is never removed. `node main.ts --help` prints the usage.
+
+Before copying anything it checks `shots.json`: three entries, each with a `file`, a `path` and a `viewport`, and
+each file present under `screenshots/`, opening as a PNG or JPEG and no larger than 256 KiB. A screenshot that
+breaks any of that stops the run with the reason and a non-zero exit instead of reaching the dossier. On success it
+prints the output path, the dossier's size, each screenshot's size and the dossier's own Totals line.
 
 Run twice outside the repository with Node 22, the two dossiers are byte for byte the same file:
 
@@ -106,4 +116,4 @@ reader's choice, and every surface is measured for horizontal overflow at 360, 7
 
 ## Licence
 
-MIT. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE). Built for [make.fun](https://make.fun).
