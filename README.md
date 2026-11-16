@@ -1,8 +1,10 @@
 # FarmOS — a reading room for make.fun's bounties
 
-[![make.fun competition](https://img.shields.io/badge/make.fun-makefun--frontend--01-b04f2e?style=flat-square)](https://make.fun/bounty/makefun-frontend-01)
+[![make.fun · makefun-frontend-01](https://make.fun/badge/makefun-frontend-01.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
+[![rank](https://make.fun/badge/makefun-frontend-01/frianowzki/makefun-farmos/rank.svg)](https://make.fun/bounty/makefun-frontend-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
+[![reward](https://make.fun/badge/makefun-frontend-01/frianowzki/makefun-farmos/reward.svg)](https://make.fun/bounty/makefun-frontend-01?utm_source=github&utm_medium=readme&utm_campaign=makefun-frontend-01)
+
 [![MIT](https://img.shields.io/badge/license-MIT-231f1a?style=flat-square)](./LICENSE)
-[![live surfaces](https://img.shields.io/badge/live%20surfaces-board%20%C2%B7%20bounty%20%C2%B7%20leaderboard%20%C2%B7%20profile-4d463d?style=flat-square)](#routes)
 
 An entry in make.fun's [*Build the best make.fun frontend*](https://make.fun/bounty/makefun-frontend-01) bounty: a
 client for make.fun's public API in plain static files — an `index.html` and eight ES modules, a stylesheet, no
