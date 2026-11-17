@@ -3,12 +3,49 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>make.fun bounties</title>
+<meta name="color-scheme" content="light dark">
+<title>farmOS — make.fun bounties</title>
 <link rel="stylesheet" href="style.css">
+<script>
+// Theme before first paint: the stored choice wins, else the system's.
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('farmos.theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', t);
+})();
+</script>
 <script type="module" src="main.js"></script>
 </head>
 <body>
-<header><a href="#/">make.fun bounties</a></header>
-<main id="app"></main>
+<a class="skip" href="#view">Skip to content</a>
+<div class="shell">
+  <header class="rail">
+    <a class="mark" href="#/" aria-label="farmOS, the bounty board">
+      <svg viewBox="0 0 24 24" aria-hidden="true" class="ico"><path d="M4 20V11M4 11 12 4l8 7M4 20h16"/><path d="M9.5 20v-5.5h5V20"/></svg>
+      <span>farmOS</span>
+    </a>
+    <nav class="dest" aria-label="Destinations">
+      <a href="#/" data-nav="board"><span class="icon"></span>Board</a>
+      <a href="#/bounties" data-nav="bounties"><span class="icon"></span>Ledger</a>
+      <a href="#/u/setyamickala" data-nav="profile"><span class="icon"></span>Profile</a>
+    </nav>
+    <div class="railfoot">
+      <button class="theme" type="button" id="theme-btn" aria-pressed="false">
+        <span class="icon" id="theme-icon"></span><span id="theme-label">Dark</span>
+      </button>
+    </div>
+  </header>
+  <main id="view" tabindex="-1">
+    <div class="loading" aria-busy="true">
+      <div class="skel skel-eyebrow"></div>
+      <div class="skel skel-title"></div>
+      <div class="skel skel-lede"></div>
+      <div class="skel skel-card"></div>
+      <p class="sr">Loading…</p>
+    </div>
+  </main>
+</div>
+<noscript><p class="noscript">farmOS reads make.fun's public API and needs JavaScript.</p></noscript>
 </body>
 </html>
