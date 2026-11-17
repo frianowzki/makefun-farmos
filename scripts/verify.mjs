@@ -277,6 +277,7 @@ async function main() {
     health.reset();
     await open(page, server.base, `#/bounty/${BOUNTY}/leaderboard`);
     await compareFrontendLeaderboard(page, await apiGet(`/competitions/${BOUNTY}/leaderboard`), bounty);
+    if (SHOTS) await capture(page, '3-bounty.jpg');
     health.check(`#/bounty/${BOUNTY}/leaderboard`);
 
     // ---- page 4: the measured leaderboard (kept off the screenshots so the three stay the requested set)
@@ -569,7 +570,8 @@ async function compareFrontendLeaderboard(page, lb, b) {
     shown.forEach((c, i) => compare(S, `${e.handle}: ${c.key}`, row[2 + i], columnExpected(c, e)));
   }
   compare(S, 'leader', (await page.$eval('.stats li:nth-child(4) .num', (e) => e.textContent).catch(() => null)), entries[0]?.handle ?? null);
-  if (caption) compare(S, 'caption bounty', caption, lb.competition?.title ?? b.title);
+  if (caption) contains(S, 'caption bounty', caption, lb.competition?.title ?? b.title);
+  if (caption && fbPhaseCaption(lb)) contains(S, 'caption phase', caption, String(lb.phase.title ?? lb.phase.key));
   const pageTitle = await page.$eval('h1', (e) => e.textContent.trim());
   compare(S, 'title', pageTitle, lb.title ?? `${b.title}: results`);
 }
@@ -829,7 +831,8 @@ async function capture(page, file) {
   await page.screenshot({ path, type: 'jpeg', quality: 82, animations: 'disabled', caret: 'hide' });
   const bytes = statSync(path).size;
   if (bytes > 262144) fail(`screenshot ${file}`, `${bytes} bytes is over the 256 KiB cap`);
-  SHOT_FILES.push({ file, path: `#${hash}`, bytes });
+  // location.hash already carries its leading '#', so the route is '#' + hash — never '##'
+  SHOT_FILES.push({ file, path: `#${hash.replace(/^#+/, '')}` || '#/', bytes });
 }
 
 function writeShots() {

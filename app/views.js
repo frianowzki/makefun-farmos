@@ -239,7 +239,7 @@ export function leaderboardView(b, lb, now = Date.now()) {
       showing === 0
         ? `<div class="card"><p style="margin:0">This board has no entries yet.${phase?.scoresVisible === false ? ' Its scores are published once the phase ends.' : ''}</p></div>`
         : `<div class="tablewrap"><div class="tscroll"><table>
-            <caption>${esc(lb.competition?.title ?? b?.title ?? '')}</caption>
+            <caption>${esc(lb.competition?.title ?? b?.title ?? '')}${phase ? ` · ${esc(String(phase.title ?? phase.key))}` : ''}</caption>
             <thead><tr><th scope="col" class="rank">#</th><th scope="col">Entry</th>${headCells}</tr></thead>
             <tbody>${entryRows}${restRows}</tbody>
           </table></div></div>
