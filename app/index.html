@@ -3,12 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>make.fun bounties</title>
-<link rel="stylesheet" href="style.css">
-<script type="module" src="main.js"></script>
+<title>FarmOS · the make.fun bounty board</title>
+<meta name="description" content="FarmOS is an editorial front end for make.fun: the live bounty board, each bounty's page and its leaderboard, and public profiles.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="./style.css">
+<script>
+  // Paint the theme before the stylesheet lands, so a dark visit never flashes paper first.
+  (function () {
+    var theme = 'light';
+    try {
+      var stored = localStorage.getItem('farmos.theme');
+      if (stored === 'dark' || stored === 'light') theme = stored;
+      else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) theme = 'dark';
+    } catch (err) {
+      theme = 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<script type="module" src="./main.js"></script>
 </head>
 <body>
-<header><a href="#/">make.fun bounties</a></header>
-<main id="app"></main>
+<a class="skip" href="#main">Skip to the content</a>
+
+<header class="rail">
+  <a class="mark" href="#/" aria-label="FarmOS: the bounty board">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 20V9.8L12 4.5l7.5 5.3V20"/><path d="M9.2 20v-5.6h5.6V20"/></svg>
+    <span class="wordmark">FarmOS</span>
+  </a>
+
+  <nav class="railnav" aria-label="Primary">
+    <a href="#/" id="nav-board">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.8" y="4.5" width="16.4" height="6" rx="1.6"/><rect x="3.8" y="13.5" width="16.4" height="6" rx="1.6"/></svg>
+      <span>Board</span>
+    </a>
+    <a href="#/live" id="nav-live">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.6"/><path d="M12 3.2v2.6M12 18.2v2.6M3.2 12h2.6M18.2 12h2.6"/></svg>
+      <span>Live</span>
+    </a>
+    <a href="#/closed" id="nav-closed">
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.5 4.5h11v15l-5.5-3.6-5.5 3.6z"/></svg>
+      <span>Closed</span>
+    </a>
+  </nav>
+
+  <button class="theme" id="theme" type="button" aria-pressed="false" aria-label="Switch to the dark theme">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg>
+    <span id="theme-word">Dark</span>
+  </button>
+</header>
+
+<main id="main" tabindex="-1">
+  <div id="view"></div>
+</main>
+
+<noscript>
+  <p class="noscript">FarmOS reads make.fun's public API in the browser, so it needs JavaScript turned on.</p>
+</noscript>
 </body>
 </html>
