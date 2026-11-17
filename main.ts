@@ -1,228 +1,279 @@
 #!/usr/bin/env node
-// Entry point for the farmOS make.fun client.
-// What it does, in order:
-//   1. read the command line (--out <dir>, -h/--help),
-//   2. check the hand-in material (shots.json, screenshots/, app/, the vendored library),
-//   3. stage app/ and screenshots/ into the output directory,
-//   4. write dossier.json with the vendored builder,
-//   5. print a short report.
-// Node 22 standard library only. The output directory is created, never deleted: under the grader it is the
-// /output mount point and removing it would fail with EBUSY.
+// Hand-in builder for the farmOS make.fun client.
+//
+// It assembles the submitted package: the static app under app/, the three captures listed by shots.json,
+// and dossier.json, which is derived from the two of them by the vendored builder. The work happens in this
+// order — arguments, source checks, capture checks, copy, dossier, report — so a bad entry fails before the
+// output directory is touched at all.
+//
+// Node 22, standard library only. Nothing is ever removed: the grader hands in a directory that is a mount
+// point (rm of it is EBUSY), so the writer only ever mkdirs and overwrites.
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { cp, readdir } from 'node:fs/promises';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFile, readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath as entryFile } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-frontend.ts';
 
-const ROOT = dirname(entryFile(import.meta.url));
+const HOME = dirname(fileURLToPath(import.meta.url));
 
-// The scorer's caps. These values are fixed: the scorer rebuilds dossier.json itself and compares byte for byte.
-const LIMITS = {
+// The cap numbers go straight into buildDossier. The scorer rebuilds the dossier with exactly these values and
+// compares the bytes, so they are contract, not configuration.
+const CAPS = {
   text_max_bytes: 163840,
   screenshots: { max: 3, max_bytes: 262144 },
   app_max_files: 993,
   app_max_bytes: 16777216,
 } as const;
 
-const SHOT_COUNT = 3;
+const CAPTURE_COUNT = 3;
+const FALLBACK_OUT = '/output';
 
-const USAGE = `usage: node main.ts [--out <dir>] [-h|--help]
+const USAGE = [
+  'usage: node main.ts [--out <dir>] [--out=<dir>] [-h|--help]',
+  '',
+  'Builds an entry: app/ and screenshots/ are copied into <dir>, then <dir>/dossier.json is written.',
+  `The directory is taken from --out, else $MAKEFUN_OUTPUT_DIR, else ${FALLBACK_OUT}.`,
+  'It is created when it is missing, overwritten when it is there, and never deleted.',
+  '',
+  'example:',
+  '  node main.ts --out ./dist',
+  '',
+].join('\n');
 
-Copies app/ and screenshots/ into <dir> and writes <dir>/dossier.json.
-<dir> comes from --out, else $MAKEFUN_OUTPUT_DIR, else /output; it is created when missing and never removed.
+/** A problem the person running this can fix: one line, no stack, exit 2. */
+class EntryError extends Error {
+  override readonly name = 'EntryError';
+}
 
-example:
-  node main.ts --out ./dist
-`;
+// ---------------------------------------------------------------------------- command line
 
-/** A problem the user can fix: printed as one line, no stack trace. */
-class EntryError extends Error {}
+interface Settings {
+  readonly wantsHelp: boolean;
+  readonly outDir: string;
+}
 
-// --------------------------------------------------------------------------------------------- arguments
+/**
+ * Reads the command line left to right. `--out` takes the following token, `--out=<dir>` its own tail; a
+ * repeated `--out` keeps the last one. Anything unrecognised stops the program with its spelling.
+ */
+function readArgv(argv: readonly string[]): Settings {
+  const rest = argv.slice();
+  let wantsHelp = false;
+  let chosen: string | undefined;
 
-type Options = { help: boolean; out: string };
+  while (rest.length > 0) {
+    const token = rest.shift() as string;
 
-function parseArgs(argv: readonly string[]): Options {
-  let help = false;
-  let fromFlag: string | undefined;
-
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i] as string;
-
-    if (arg === '-h' || arg === '--help') {
-      help = true;
+    if (token === '-h' || token === '--help') {
+      wantsHelp = true;
       continue;
     }
 
-    if (arg === '--out') {
-      const value = argv[i + 1];
-      if (value === undefined || value.startsWith('-')) throw new EntryError('--out needs a directory after it');
-      fromFlag = value;
-      i += 1;
+    if (token === '--out') {
+      const value = rest.shift();
+      if (value === undefined || value === '' || value.startsWith('-')) {
+        throw new EntryError(`--out wants a directory, got ${value === undefined ? 'nothing' : `"${value}"`}`);
+      }
+      chosen = value;
       continue;
     }
 
-    if (arg.startsWith('--out=')) {
-      const value = arg.slice('--out='.length);
-      if (value === '') throw new EntryError('--out= needs a directory after it');
-      fromFlag = value;
+    if (token.startsWith('--out=')) {
+      const value = token.slice('--out='.length);
+      if (value === '') throw new EntryError('--out= wants a directory after the equals sign');
+      chosen = value;
       continue;
     }
 
-    if (arg.startsWith('-')) throw new EntryError(`unknown flag: ${arg}`);
-    throw new EntryError(`unexpected argument: ${arg} (did you mean --out ${arg}?)`);
+    if (token.startsWith('-')) throw new EntryError(`unknown flag "${token}" — node main.ts --help lists the flags`);
+    throw new EntryError(`stray argument "${token}" — did you mean: node main.ts --out ${token}?`);
   }
 
-  const chosen = fromFlag ?? process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-  return { help, out: resolve(chosen) };
+  const fromEnv = process.env.MAKEFUN_OUTPUT_DIR;
+  const target = chosen ?? (fromEnv !== undefined && fromEnv.trim() !== '' ? fromEnv : FALLBACK_OUT);
+  return { wantsHelp, outDir: resolve(HOME, target) };
 }
 
-// --------------------------------------------------------------------------------------------- shots.json
+// ---------------------------------------------------------------------------- shots.json
 
-type Shot = { file: string; route: string; width: number; height: number };
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+interface Capture {
+  readonly file: string;
+  readonly route: string;
+  readonly size: string;
 }
 
-function asText(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value : null;
+type Dict = Record<string, unknown>;
+
+function dictOf(value: unknown): Dict | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Dict) : null;
 }
 
-function asNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
+/** One capture: the fields the contract needs, and the screenshot on disk it points at. */
+function readCapture(raw: unknown, index: number): Capture {
+  const slot = `shots.json[${index}]`;
 
-/** Validates one shots.json entry against the screenshot it names; returns the facts the report prints. */
-function checkShot(raw: unknown, index: number, shotDir: string): Shot {
-  const where = `shots.json entry ${index + 1}`;
+  const entry = dictOf(raw);
+  if (entry === null) throw new EntryError(`${slot} is not an object`);
 
-  const entry = asRecord(raw);
-  if (entry === null) throw new EntryError(`${where}: not an object`);
+  const file = entry.file;
+  if (typeof file !== 'string' || file === '') throw new EntryError(`${slot}.file must be a file name`);
+  const at = `${slot} (${file})`;
 
-  const file = asText(entry.file);
-  if (file === null) throw new EntryError(`${where}: "file" is missing or not a name`);
-
-  const route = asText(entry.path);
-  if (route === null) throw new EntryError(`${where} (${file}): "path" is missing or not a route`);
-
-  const viewport = asRecord(entry.viewport);
-  if (viewport === null) throw new EntryError(`${where} (${file}): "viewport" is missing or not an object`);
-
-  const width = asNumber(viewport.width);
-  if (width === null) throw new EntryError(`${where} (${file}): "viewport.width" is not a number`);
-
-  const height = asNumber(viewport.height);
-  if (height === null) throw new EntryError(`${where} (${file}): "viewport.height" is not a number`);
-
-  const onDisk = join(shotDir, file);
-  if (!existsSync(onDisk)) throw new EntryError(`${where} (${file}): screenshots/${file} does not exist`);
-
-  const bytes = statSync(onDisk).size;
-  if (bytes >= LIMITS.screenshots.max_bytes) {
-    throw new EntryError(`${where} (${file}): screenshots/${file} is ${bytes} bytes, at or over the ${LIMITS.screenshots.max_bytes} byte cap`);
+  if (file.includes('/') || file.includes('\\') || file.startsWith('.')) {
+    throw new EntryError(`${at}: file must be a bare name inside screenshots/, not a path`);
   }
 
-  return { file, route, width, height };
+  const route = entry.path;
+  if (typeof route !== 'string' || route === '') throw new EntryError(`${at}.path must be the route the capture shows`);
+
+  const viewport = dictOf(entry.viewport);
+  if (viewport === null) throw new EntryError(`${at}.viewport must be an object with width and height`);
+
+  const { width, height } = viewport;
+  if (typeof width !== 'number' || !Number.isFinite(width)) throw new EntryError(`${at}.viewport.width must be a number`);
+  if (typeof height !== 'number' || !Number.isFinite(height)) throw new EntryError(`${at}.viewport.height must be a number`);
+
+  const shotPath = join(HOME, 'screenshots', file);
+  let bytes: number;
+  try {
+    const info = statSync(shotPath);
+    if (!info.isFile()) throw new EntryError(`${at}: screenshots/${file} is not a file`);
+    bytes = info.size;
+  } catch (err) {
+    if (err instanceof EntryError) throw err;
+    throw new EntryError(`${at}: screenshots/${file} is not there (${tellOf(err)})`);
+  }
+
+  if (bytes >= CAPS.screenshots.max_bytes) {
+    throw new EntryError(`${at}: screenshots/${file} is ${bytes} bytes, which is not under the ${CAPS.screenshots.max_bytes} byte cap`);
+  }
+
+  return { file, route, size: `${width}x${height}` };
 }
 
-function readShots(shotDir: string): Shot[] {
-  const listFile = join(ROOT, 'shots.json');
-  if (!existsSync(listFile)) throw new EntryError('shots.json is missing from the entry directory');
+/** The whole capture list, checked end to end before a single byte is copied. */
+function readCaptures(): Capture[] {
+  const listPath = join(HOME, 'shots.json');
+  if (!existsSync(listPath)) throw new EntryError('shots.json is not in the entry directory');
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(listFile, 'utf8'));
+    parsed = JSON.parse(readFileSync(listPath, 'utf8'));
   } catch (err) {
-    throw new EntryError(`shots.json is not valid JSON (${(err as Error).message})`);
+    throw new EntryError(`shots.json could not be read as JSON: ${tellOf(err)}`);
   }
 
-  if (!Array.isArray(parsed)) throw new EntryError('shots.json must hold an array of screenshots');
-  if (parsed.length !== SHOT_COUNT) {
-    throw new EntryError(`shots.json lists ${parsed.length} screenshot${parsed.length === 1 ? '' : 's'}; the entry needs exactly ${SHOT_COUNT}`);
+  if (!Array.isArray(parsed)) throw new EntryError('shots.json must be an array of captures');
+  if (parsed.length !== CAPTURE_COUNT) {
+    throw new EntryError(`shots.json lists ${parsed.length} capture${parsed.length === 1 ? '' : 's'}; an entry carries exactly ${CAPTURE_COUNT}`);
   }
 
-  return parsed.map((raw, i) => checkShot(raw, i, shotDir));
+  const captures = parsed.map(readCapture);
+  const names = new Set<string>();
+  for (const capture of captures) {
+    if (names.has(capture.file)) throw new EntryError(`shots.json uses the file ${capture.file} for more than one capture`);
+    names.add(capture.file);
+  }
+  return captures;
 }
 
-// --------------------------------------------------------------------------------------------- material
+// ---------------------------------------------------------------------------- sources
 
-async function holdsAnyFile(dir: string): Promise<boolean> {
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (entry.isFile()) return true;
-    if (entry.isDirectory() && (await holdsAnyFile(join(dir, entry.name)))) return true;
+/** app/ must exist with at least one file, and the vendored builder must be present. */
+function assertSources(): void {
+  const appDir = join(HOME, 'app');
+  if (!existsSync(appDir)) throw new EntryError('app/ is not in the entry directory');
+  if (!treeHasFile(appDir)) throw new EntryError('app/ holds no files');
+
+  if (!existsSync(join(HOME, 'vendor', 'makefun-frontend.ts'))) {
+    throw new EntryError('vendor/makefun-frontend.ts is not in the entry directory');
+  }
+}
+
+function treeHasFile(dir: string): boolean {
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    if (item.isFile()) return true;
+    if (item.isDirectory() && treeHasFile(join(dir, item.name))) return true;
   }
   return false;
 }
 
-async function checkMaterial(): Promise<void> {
-  const appDir = join(ROOT, 'app');
-  if (!existsSync(appDir)) throw new EntryError('app/ is missing from the entry directory');
-  if (!(await holdsAnyFile(appDir))) throw new EntryError('app/ holds no files');
-  if (!existsSync(join(ROOT, 'vendor', 'makefun-frontend.ts'))) throw new EntryError('vendor/makefun-frontend.ts is missing');
+// ---------------------------------------------------------------------------- writing
+
+/** Copies every file of `source` into `target`, making directories as it goes and replacing files that exist. */
+async function copyTree(source: string, target: string): Promise<void> {
+  mkdirSync(target, { recursive: true });
+  for (const item of await readdir(source, { withFileTypes: true })) {
+    const from = join(source, item.name);
+    const to = join(target, item.name);
+    if (item.isDirectory()) await copyTree(from, to);
+    else if (item.isFile()) await copyFile(from, to);
+  }
 }
 
-/** Copies the static frontend and the captures over the output; existing files are overwritten. */
-async function stage(outDir: string): Promise<void> {
-  await cp(join(ROOT, 'app'), join(outDir, 'app'), { recursive: true, force: true });
-
-  const captures = join(ROOT, 'screenshots');
-  mkdirSync(join(outDir, 'screenshots'), { recursive: true });
-  if (existsSync(captures)) await cp(captures, join(outDir, 'screenshots'), { recursive: true, force: true });
+async function prepare(outDir: string): Promise<void> {
+  mkdirSync(outDir, { recursive: true });
+  await copyTree(join(HOME, 'app'), join(outDir, 'app'));
+  await copyTree(join(HOME, 'screenshots'), join(outDir, 'screenshots'));
 }
 
-// --------------------------------------------------------------------------------------------- report
+// ---------------------------------------------------------------------------- report
 
-/** The dossier's `Totals:` line: the summary lives in its JSON `text` field. */
+/** The first `Totals:` line of the dossier's own text. */
 function totalsOf(dossier: Uint8Array): string {
-  let text = '';
   try {
-    const parsed: unknown = JSON.parse(Buffer.from(dossier).toString('utf8'));
-    if (asRecord(parsed) !== null) text = String((parsed as Record<string, unknown>).text ?? '');
+    const doc = dictOf(JSON.parse(Buffer.from(dossier).toString('utf8')));
+    const text = doc !== null && typeof doc.text === 'string' ? doc.text : '';
+    const line = text.split('\n').find((each) => each.startsWith('Totals:'));
+    return line ?? 'Totals: (the dossier has no Totals line)';
   } catch {
-    // A dossier that does not parse is the scorer's business, not this report's.
+    return 'Totals: (the dossier did not parse)';
   }
-  const found = text.split('\n').find((line) => line.startsWith('Totals:'));
-  return found ?? 'Totals: (no Totals line in the dossier)';
 }
 
-function summarize(outDir: string, dossier: Uint8Array, shots: readonly Shot[]): void {
-  console.log(`output:    ${outDir}`);
-  console.log(`dossier:   ${dossier.byteLength} bytes`);
-  for (const shot of shots) {
-    const size = statSync(join(outDir, 'screenshots', shot.file)).size;
-    console.log(`shot:      screenshots/${shot.file} ${size} bytes (${shot.width}x${shot.height} at ${shot.route})`);
-  }
-  console.log(totalsOf(dossier));
+function tellOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
-// --------------------------------------------------------------------------------------------- main
+function printReport(outDir: string, dossier: Uint8Array, captures: readonly Capture[]): void {
+  const rows = [
+    `built      ${outDir}`,
+    `dossier    ${dossier.byteLength} bytes`,
+    ...captures.map((c) => `capture    screenshots/${c.file} ${statSync(join(outDir, 'screenshots', c.file)).size} bytes, ${c.size}, ${c.route}`),
+    '',
+    totalsOf(dossier),
+  ];
+  process.stdout.write(`${rows.join('\n')}\n`);
+}
+
+// ---------------------------------------------------------------------------- run
 
 async function run(argv: readonly string[]): Promise<void> {
-  const { help, out } = parseArgs(argv);
-  if (help) {
+  const { wantsHelp, outDir } = readArgv(argv);
+  if (wantsHelp) {
     process.stdout.write(USAGE);
     return;
   }
 
-  await checkMaterial();
-  const shots = readShots(join(ROOT, 'screenshots'));
+  assertSources();
+  const captures = readCaptures();
 
-  mkdirSync(out, { recursive: true });
-  await stage(out);
+  await prepare(outDir);
 
-  const dossier = buildDossier(out, LIMITS);
-  writeFileSync(join(out, 'dossier.json'), dossier);
+  const dossier = buildDossier(outDir, CAPS);
+  writeFileSync(join(outDir, 'dossier.json'), dossier);
 
-  summarize(out, dossier, shots);
+  printReport(outDir, dossier, captures);
 }
 
 run(process.argv.slice(2)).catch((err: unknown) => {
-  const message = err instanceof Error ? err.message : String(err);
-  process.stderr.write(`main.ts: ${message}\n`);
-  if (err instanceof EntryError) process.stderr.write('run `node main.ts --help` for usage\n');
+  if (err instanceof EntryError) {
+    process.stderr.write(`main.ts: ${err.message}\n`);
+    process.stderr.write('help: node main.ts --help\n');
+    process.exitCode = 2;
+    return;
+  }
+  process.stderr.write(`main.ts: unexpected failure: ${tellOf(err)}\n`);
   process.exitCode = 1;
 });
-
-
